@@ -51,6 +51,12 @@
     osc.stop(now + dur + 0.01);
   }
 
+  // === Parametri fisici =====================================================
+  const GRAVITY       = 0.8;
+  const JUMP_V0       = -16; // spinta iniziale
+  const JUMP_HOLD     = 0.5; // spinta addizionale per frame mentre si tiene premuto
+  const JUMP_HOLD_TCK = 14;  // ~14 frame ≈ 230 ms di “hang time” extra
+
   // === Personaggio ridisegnato stile "La Linea" ============================
   const STROKE = 8;   // spessore tratto
   const SCALE  = 1;   // scala del personaggio
@@ -117,27 +123,41 @@
     ctx.restore();
   }
 
-  // Personaggio (fisica)
+  // Personaggio (fisica + salto prolungato)
+  let inputHeld = false;      // true mentre il dito/space è tenuto premuto
   const guy = {
     x: Math.round(W*0.28),
     y: baseY,
     vy: 0,
     onGround: true,
+    holdTicks: 0,            // quanti frame restano di “trattenuta” in aria
     jump() {
       if (!running) return;
       ensureAudio(); // sblocca audio al primo input
       if (this.onGround) {
-        this.vy = -16;
+        this.vy = JUMP_V0;
         this.onGround = false;
+        this.holdTicks = JUMP_HOLD_TCK; // ricarica finestra di hold all’avvio del salto
       }
     },
     update() {
-      this.vy += 0.8;           // gravità
+      // gravità base
+      this.vy += GRAVITY;
+
+      // salto prolungato: mentre si tiene premuto, per un breve periodo
+      if (!this.onGround && inputHeld && this.holdTicks > 0 && this.vy < 0) {
+        this.vy -= JUMP_HOLD; // riduce la caduta (o aumenta l’ascesa) di un po’
+        this.holdTicks--;
+      }
+
       this.y += this.vy;
+
+      // contatto con baseline
       if (this.y > baseY) {
         this.y = baseY;
         this.vy = 0;
         this.onGround = true;
+        this.holdTicks = 0; // reset
       }
     },
     draw() {
@@ -178,16 +198,10 @@
   }
 
   // —— Bonus speciale salvavita disegnato dalla “mano” ----------------------
-  // appare raramente quando la mano è in scena; conferisce +1 scudo
   function maybeSpawnLifesaver() {
     if (!hand.show || lifesaver) return;
-    // probabilità bassa per non inflazionare
     if (Math.random() < 0.08) {
-      lifesaver = {
-        x: hand.x - 20,
-        y: hand.y + 22,
-        r: 14
-      };
+      lifesaver = { x: hand.x - 20, y: hand.y + 22, r: 14 };
     }
   }
 
@@ -277,7 +291,6 @@
       ctx.save();
       ctx.lineWidth = 4;
       ctx.strokeStyle = FG;
-      // stellina a 5 punte
       ctx.beginPath();
       const spikes = 5, outer = s.r, inner = s.r*0.5;
       let rot = -Math.PI/2, step = Math.PI/spikes;
@@ -290,7 +303,6 @@
       }
       ctx.closePath();
       ctx.stroke();
-      // piccolo cerchietto al centro
       ctx.beginPath();
       ctx.arc(s.x, s.y, 2.5, 0, Math.PI*2);
       ctx.stroke();
@@ -340,7 +352,7 @@
         }
       } else if (hand.show) {
         hand.x -= speed*0.8;
-        maybeSpawnLifesaver(); // può disegnare il salvavita quando è in scena
+        maybeSpawnLifesaver();
       }
 
       // bonus
@@ -361,16 +373,15 @@
         return b.x > -40;
       });
 
-      // salvavita si muove con il mondo
+      // salvavita
       if (lifesaver) {
         lifesaver.x -= speed;
-        // raccolta salvavita (anche a terra)
         const dx = Math.abs(guy.x - lifesaver.x);
         const dy = Math.abs((guy.y - 70) - lifesaver.y);
         const take = Math.hypot(dx, dy) < (lifesaver.r + 20);
         if (take) {
           shields += 1;
-          clickSound(900, 0.06); // pitch leggermente più basso
+          clickSound(900, 0.06);
           for (let i=0;i<16;i++) particles.push({x:lifesaver.x, y:lifesaver.y, a:0.95});
           popups.push({text:'SCUDO +1', x:lifesaver.x-40, y:lifesaver.y-10, a:1});
           lifesaver = null;
@@ -379,7 +390,7 @@
         }
       }
 
-      // aggiorna popup
+      // popup
       popups.forEach(pp => { pp.y -= 0.6; pp.a -= 0.02; });
       popups = popups.filter(pp => pp.a > 0);
 
@@ -391,13 +402,13 @@
         if (collide(o, guy.x)) {
           if (shields > 0) {
             shields -= 1; // consuma scudo e salta automaticamente
-            guy.vy = -14;
+            guy.vy = JUMP_V0 * 0.9; // piccolo rimbalzo di salvataggio
             guy.onGround = false;
+            guy.holdTicks = Math.max(guy.holdTicks, Math.floor(JUMP_HOLD_TCK*0.6)); // concede un po’ di aria
             clickSound(700, 0.07);
             popups.push({text:'SALVATO', x:guy.x-30, y:guy.y-90, a:1});
             for (let i=0;i<20;i++) particles.push({x:guy.x, y:guy.y-60, a:0.9});
-            // Non fermiamo il gioco
-            break;
+            break; // continua il gioco
           } else {
             running = false; // game over
             break;
@@ -422,7 +433,6 @@
     ctx.fillStyle = FG;
     ctx.font = '20px ui-monospace, Menlo, Consolas, monospace';
     ctx.fillText(`PUNTI ${score}`, 18, 30);
-    // Indicatore scudi
     if (shields > 0) {
       ctx.textAlign = 'right';
       ctx.fillText(`★ ${shields}`, W - 18, 30);
@@ -434,7 +444,7 @@
       ctx.font = 'bold 44px ui-monospace, Menlo, Consolas, monospace';
       ctx.fillText('GAME OVER', W/2, H/2 - 10);
       ctx.font = '20px ui-monospace, Menlo, Consolas, monospace';
-      ctx.fillText('Premi SPAZIO o tocca per ripartire', W/2, H/2 + 24);
+      ctx.fillText('Premi e tieni premuto SPAZIO o tocca per ripartire', W/2, H/2 + 24);
       ctx.textAlign = 'start';
     }
 
@@ -444,29 +454,52 @@
     requestAnimationFrame(step);
   }
 
-  // Input
-  function onPress() {
+  // === Input (tap/hold & keyboard) =========================================
+  function pressDown() {
+    inputHeld = true;
     if (!running) return restart();
     guy.jump();
   }
+  function pressUp() {
+    inputHeld = false; // rilasci: interrompe l’“hang time” se ancora attivo
+  }
+
+  function onPress() { // compat legacy (click singolo)
+    pressDown();
+    // rilascia subito per click
+    setTimeout(pressUp, 0);
+  }
+
   function restart() {
     running = true;
     t = 0; score = 0; speed = 4;
     obst.length = 0; particles.length = 0; bonuses.length = 0; popups.length = 0;
     lifesaver = null; shields = 0;
-    guy.y = baseY; guy.vy = 0; guy.onGround = true;
+    guy.y = baseY; guy.vy = 0; guy.onGround = true; guy.holdTicks = 0;
   }
 
+  // Tastiera: Space hold
   window.addEventListener('keydown', e => {
-    if (e.code === 'Space') { e.preventDefault(); ensureAudio(); onPress(); }
+    if (e.code === 'Space') { e.preventDefault(); ensureAudio(); pressDown(); }
     if (e.code === 'KeyR') restart();
     if (e.code === 'KeyP') togglePause();
   });
+  window.addEventListener('keyup', e => {
+    if (e.code === 'Space') { e.preventDefault(); pressUp(); }
+  });
 
-  document.getElementById('btnJump')?.addEventListener('click', ()=>{ ensureAudio(); onPress(); });
+  // Touch / Mouse sulla zona di gioco
+  const touch = document.getElementById('touch');
+  touch?.addEventListener('pointerdown', ()=>{ ensureAudio(); pressDown(); });
+  touch?.addEventListener('pointerup', pressUp);
+  touch?.addEventListener('pointercancel', pressUp);
+  touch?.addEventListener('pointerleave', pressUp);
+
+  // Bottoni UI
+  document.getElementById('btnJump')?.addEventListener('pointerdown', ()=>{ ensureAudio(); pressDown(); });
+  document.getElementById('btnJump')?.addEventListener('pointerup', pressUp);
   document.getElementById('btnRestart')?.addEventListener('click', restart);
   document.getElementById('btnPause')?.addEventListener('click', togglePause);
-  document.getElementById('touch')?.addEventListener('pointerdown', ()=>{ ensureAudio(); onPress(); });
 
   function togglePause(){
     running = !running;
