@@ -18,7 +18,9 @@
   let speed = 4;            // velocità scorrimento linea
   let obst = [];            // ostacoli (scalini, buchi, gobbe)
   let particles = [];       // polvere bianca della traccia
+  let popups = [];          // testi fluttuanti (es. +50)
   let hand = {x: W+120, y: baseY-160, show: false, timer: 0};
+  let bonuses = [];         // —— NUOVO: bonus in aria
 
   // === Personaggio ridisegnato stile "La Linea" ===
   const STROKE = 8;   // spessore tratto
@@ -59,15 +61,15 @@
     ctx.lineTo(x + (w*0.05), armY);
     ctx.lineTo(x + (w*0.05) + arm, armY - wobble);
 
-    // Mano a tre dita (tre tratti separati dalla giuntura)
+    // Mano a tre dita
     const hx = x + (w*0.05) + arm;
     const hy = armY - wobble;
     ctx.moveTo(hx, hy);
-    ctx.lineTo(hx + finger, hy - finger*0.35); // dito alto
+    ctx.lineTo(hx + finger, hy - finger*0.35);
     ctx.moveTo(hx, hy);
-    ctx.lineTo(hx + finger, hy + finger*0.05); // dito medio
+    ctx.lineTo(hx + finger, hy + finger*0.05);
     ctx.moveTo(hx, hy);
-    ctx.lineTo(hx + finger*0.75, hy + finger*0.45); // dito basso
+    ctx.lineTo(hx + finger*0.75, hy + finger*0.45);
 
     // Fianco destro e ritorno alla baseline
     ctx.moveTo(x + (w*0.02), armY + 6);
@@ -77,7 +79,7 @@
 
     ctx.stroke();
 
-    // Bocca (trattino separato)
+    // Bocca
     ctx.beginPath();
     ctx.moveTo(x + (w*0.10), y - (h*0.86));
     ctx.lineTo(x + (w*0.26), y - (h*0.84));
@@ -117,46 +119,52 @@
   function spawnObstacle() {
     const r = Math.random();
     if (r < 0.5) {
-      // scalino (su o giù)
       const dir = Math.random() < 0.5 ? -1 : 1;
       const step = 35 + Math.random()*25;
       obst.push({type:'step', x: W+40, w: 80, h: dir*step});
     } else if (r < 0.8) {
-      // gobba
       const h = 30 + Math.random()*40;
       obst.push({type:'bump', x: W+40, w: 120, h});
     } else {
-      // buco (interruzione linea)
       const w = 90 + Math.random()*90;
       obst.push({type:'gap', x: W+40, w});
+    }
+  }
+
+  // —— NUOVO: generatore bonus in aria
+  function spawnBonus() {
+    // probabilità bassa ma costante
+    if (Math.random() < 0.035) {
+      const r = 12; // raggio
+      const y = baseY - (80 + Math.random()*140); // in aria
+      bonuses.push({x: W+60, y, r, v: 50, caught: false});
     }
   }
 
   // Collisioni rispetto alla baseline deformata
   function collide(o, x) {
     if (o.type === 'gap') {
-      // se il personaggio è “sul buco” ed è a terra, cade (game over)
       const inGap = (x > o.x && x < o.x + o.w);
       return inGap && guy.onGround;
     }
     if (o.type === 'step') {
       const inStep = (x > o.x && x < o.x + o.w);
       if (!inStep) return false;
-      const local = (x - o.x) / o.w; // 0..1
+      const local = (x - o.x) / o.w;
       const yOffset = o.h * (local < 0.5 ? (local*2) : (1 - (local-0.5)*2));
       return guy.y > baseY + yOffset - 8;
     }
     if (o.type === 'bump') {
       const inB = (x > o.x && x < o.x + o.w);
       if (!inB) return false;
-      const local = (x - o.x) / o.w; // 0..1
+      const local = (x - o.x) / o.w;
       const yOffset = -o.h * Math.sin(local*Math.PI);
       return guy.y > baseY + yOffset - 8;
     }
     return false;
   }
 
-  // Disegno baseline, ostacoli e mano “che disegna”
+  // Disegno baseline, ostacoli, mano, bonus
   function drawWorld() {
     ctx.lineWidth = 6;
     ctx.lineCap = 'round';
@@ -167,12 +175,9 @@
 
     for (const o of obst) {
       if (o.x > W) continue;
-
-      // tratto piatto fino all'inizio
       ctx.lineTo(o.x, baseY);
 
       if (o.type === 'gap') {
-        // stacco
         ctx.moveTo(o.x + o.w, baseY);
       } else if (o.type === 'step') {
         const mid = o.x + o.w/2;
@@ -190,14 +195,32 @@
     ctx.lineTo(W, baseY);
     ctx.stroke();
 
-    // mano
+    // mano che disegna
     if (hand.show) {
       ctx.fillStyle = FG;
       ctx.beginPath();
       ctx.arc(hand.x, hand.y, 14, 0, Math.PI*2);
       ctx.fill();
-      ctx.fillRect(hand.x-2, hand.y, 4, 60); // “matita”
+      ctx.fillRect(hand.x-2, hand.y, 4, 60);
     }
+
+    // —— NUOVO: disegno bonus
+    bonuses.forEach(b => {
+      ctx.save();
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = FG;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.r, 0, Math.PI*2);
+      ctx.stroke();
+      // “+” interno
+      ctx.beginPath();
+      ctx.moveTo(b.x - b.r*0.5, b.y);
+      ctx.lineTo(b.x + b.r*0.5, b.y);
+      ctx.moveTo(b.x, b.y - b.r*0.5);
+      ctx.lineTo(b.x, b.y + b.r*0.5);
+      ctx.stroke();
+      ctx.restore();
+    });
 
     // polvere
     particles.forEach(p=>{
@@ -207,9 +230,18 @@
       ctx.globalAlpha = 1;
     });
     particles = particles.filter(p => (p.a -= 0.02) > 0);
+
+    // popup
+    popups.forEach(pp => {
+      ctx.globalAlpha = pp.a;
+      ctx.fillStyle = FG;
+      ctx.font = '20px ui-monospace, Menlo, Consolas, monospace';
+      ctx.fillText(pp.text, pp.x, pp.y);
+      ctx.globalAlpha = 1;
+    });
   }
 
-  // Loop
+  // Loop principale
   function step() {
     if (running) {
       t++;
@@ -218,7 +250,7 @@
       // difficoltà progressiva
       if (t % 600 === 0) speed += 0.3;
 
-      // aggiorna ostacoli
+      // ostacoli
       if (t % 70 === 0) spawnObstacle();
       obst.forEach(o => o.x -= speed);
       obst = obst.filter(o => o.x + o.w > -20);
@@ -235,10 +267,36 @@
         hand.x -= speed*0.8;
       }
 
+      // —— NUOVO: bonus
+      if (t % 50 === 0) spawnBonus();        // frequenza base
+      bonuses.forEach(b => b.x -= speed);    // scorrimento
+      // raccolta/cleanup
+      bonuses = bonuses.filter(b => {
+        // collisione circolare semplice solo se NON a terra (bonus “in aria”)
+        const dx = Math.abs(guy.x - b.x);
+        const dy = Math.abs((guy.y - 60) - b.y); // offset piccolo per centro "petto"
+        const hit = !guy.onGround && Math.hypot(dx, dy) < (b.r + 18);
+        if (hit) {
+          score += b.v;
+          // particelle “scintille”
+          for (let i=0;i<16;i++){
+            particles.push({x:b.x, y:b.y, a:0.9});
+          }
+          // popup +50
+          popups.push({text:'+50', x:b.x-16, y:b.y-8, a:1});
+          return false; // rimuovi
+        }
+        return b.x > -40; // altrimenti resta se in scena
+      });
+
+      // aggiorna popup
+      popups.forEach(pp => { pp.y -= 0.6; pp.a -= 0.02; });
+      popups = popups.filter(pp => pp.a > 0);
+
       // personaggio
       guy.update();
 
-      // collisioni
+      // collisioni con ostacoli
       for (const o of obst) {
         if (collide(o, guy.x)) {
           running = false; // game over
@@ -287,7 +345,7 @@
   function restart() {
     running = true;
     t = 0; score = 0; speed = 4;
-    obst.length = 0; particles.length = 0;
+    obst.length = 0; particles.length = 0; bonuses.length = 0; popups.length = 0;
     guy.y = baseY; guy.vy = 0; guy.onGround = true;
   }
 
