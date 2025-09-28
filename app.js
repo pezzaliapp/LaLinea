@@ -20,9 +20,38 @@
   let particles = [];       // polvere bianca della traccia
   let popups = [];          // testi fluttuanti (es. +50)
   let hand = {x: W+120, y: baseY-160, show: false, timer: 0};
-  let bonuses = [];         // —— NUOVO: bonus in aria
+  let bonuses = [];         // bonus in aria (valenze variabili)
+  let lifesaver = null;     // bonus speciale salvavita (stellina)
+  let shields = 0;          // scudi attivi (1 per ogni salvavita preso)
 
-  // === Personaggio ridisegnato stile "La Linea" ===
+  // === Audio (click breve B/N) =============================================
+  let AC = null, gain;
+  function ensureAudio() {
+    if (!AC) {
+      AC = new (window.AudioContext || window.webkitAudioContext)();
+      gain = AC.createGain();
+      gain.connect(AC.destination);
+      gain.gain.value = 0.4;
+    } else if (AC.state === 'suspended') {
+      AC.resume();
+    }
+  }
+  function clickSound(pitch = 1200, dur = 0.05) {
+    if (!AC) return;
+    const osc = AC.createOscillator();
+    const g   = AC.createGain();
+    osc.type = 'square';
+    osc.frequency.value = pitch;
+    const now = AC.currentTime;
+    g.gain.setValueAtTime(0.001, now);
+    g.gain.exponentialRampToValueAtTime(0.5, now + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.001, now + dur);
+    osc.connect(g).connect(gain);
+    osc.start(now);
+    osc.stop(now + dur + 0.01);
+  }
+
+  // === Personaggio ridisegnato stile "La Linea" ============================
   const STROKE = 8;   // spessore tratto
   const SCALE  = 1;   // scala del personaggio
 
@@ -79,7 +108,7 @@
 
     ctx.stroke();
 
-    // Bocca
+    // Bocca (trattino)
     ctx.beginPath();
     ctx.moveTo(x + (w*0.10), y - (h*0.86));
     ctx.lineTo(x + (w*0.26), y - (h*0.84));
@@ -96,6 +125,7 @@
     onGround: true,
     jump() {
       if (!running) return;
+      ensureAudio(); // sblocca audio al primo input
       if (this.onGround) {
         this.vy = -16;
         this.onGround = false;
@@ -131,13 +161,33 @@
     }
   }
 
-  // —— NUOVO: generatore bonus in aria
+  // —— Bonus in aria (valenze variabili) ------------------------------------
+  function randomBonusValue() {
+    // 70%: +25, 25%: +50, 5%: +100 (rarissimo)
+    const r = Math.random();
+    if (r < 0.70) return 25;
+    if (r < 0.95) return 50;
+    return 100;
+  }
   function spawnBonus() {
-    // probabilità bassa ma costante
     if (Math.random() < 0.035) {
       const r = 12; // raggio
       const y = baseY - (80 + Math.random()*140); // in aria
-      bonuses.push({x: W+60, y, r, v: 50, caught: false});
+      bonuses.push({x: W+60, y, r, v: randomBonusValue()});
+    }
+  }
+
+  // —— Bonus speciale salvavita disegnato dalla “mano” ----------------------
+  // appare raramente quando la mano è in scena; conferisce +1 scudo
+  function maybeSpawnLifesaver() {
+    if (!hand.show || lifesaver) return;
+    // probabilità bassa per non inflazionare
+    if (Math.random() < 0.08) {
+      lifesaver = {
+        x: hand.x - 20,
+        y: hand.y + 22,
+        r: 14
+      };
     }
   }
 
@@ -150,21 +200,21 @@
     if (o.type === 'step') {
       const inStep = (x > o.x && x < o.x + o.w);
       if (!inStep) return false;
-      const local = (x - o.x) / o.w;
+      const local = (x - o.x) / o.w; // 0..1
       const yOffset = o.h * (local < 0.5 ? (local*2) : (1 - (local-0.5)*2));
       return guy.y > baseY + yOffset - 8;
     }
     if (o.type === 'bump') {
       const inB = (x > o.x && x < o.x + o.w);
       if (!inB) return false;
-      const local = (x - o.x) / o.w;
+      const local = (x - o.x) / o.w; // 0..1
       const yOffset = -o.h * Math.sin(local*Math.PI);
       return guy.y > baseY + yOffset - 8;
     }
     return false;
   }
 
-  // Disegno baseline, ostacoli, mano, bonus
+  // Disegno baseline, ostacoli, mano, bonus, salvavita
   function drawWorld() {
     ctx.lineWidth = 6;
     ctx.lineCap = 'round';
@@ -204,7 +254,7 @@
       ctx.fillRect(hand.x-2, hand.y, 4, 60);
     }
 
-    // —— NUOVO: disegno bonus
+    // bonus in aria (cerchio + simbolo '+')
     bonuses.forEach(b => {
       ctx.save();
       ctx.lineWidth = 4;
@@ -212,7 +262,6 @@
       ctx.beginPath();
       ctx.arc(b.x, b.y, b.r, 0, Math.PI*2);
       ctx.stroke();
-      // “+” interno
       ctx.beginPath();
       ctx.moveTo(b.x - b.r*0.5, b.y);
       ctx.lineTo(b.x + b.r*0.5, b.y);
@@ -221,6 +270,32 @@
       ctx.stroke();
       ctx.restore();
     });
+
+    // salvavita (stellina)
+    if (lifesaver) {
+      const s = lifesaver;
+      ctx.save();
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = FG;
+      // stellina a 5 punte
+      ctx.beginPath();
+      const spikes = 5, outer = s.r, inner = s.r*0.5;
+      let rot = -Math.PI/2, step = Math.PI/spikes;
+      ctx.moveTo(s.x + Math.cos(rot)*outer, s.y + Math.sin(rot)*outer);
+      for (let i=0;i<spikes;i++){
+        rot += step;
+        ctx.lineTo(s.x + Math.cos(rot)*inner, s.y + Math.sin(rot)*inner);
+        rot += step;
+        ctx.lineTo(s.x + Math.cos(rot)*outer, s.y + Math.sin(rot)*outer);
+      }
+      ctx.closePath();
+      ctx.stroke();
+      // piccolo cerchietto al centro
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 2.5, 0, Math.PI*2);
+      ctx.stroke();
+      ctx.restore();
+    }
 
     // polvere
     particles.forEach(p=>{
@@ -265,29 +340,44 @@
         }
       } else if (hand.show) {
         hand.x -= speed*0.8;
+        maybeSpawnLifesaver(); // può disegnare il salvavita quando è in scena
       }
 
-      // —— NUOVO: bonus
-      if (t % 50 === 0) spawnBonus();        // frequenza base
-      bonuses.forEach(b => b.x -= speed);    // scorrimento
-      // raccolta/cleanup
+      // bonus
+      if (t % 50 === 0) spawnBonus();
+      bonuses.forEach(b => b.x -= speed);
       bonuses = bonuses.filter(b => {
         // collisione circolare semplice solo se NON a terra (bonus “in aria”)
         const dx = Math.abs(guy.x - b.x);
-        const dy = Math.abs((guy.y - 60) - b.y); // offset piccolo per centro "petto"
+        const dy = Math.abs((guy.y - 60) - b.y); // offset per "petto"
         const hit = !guy.onGround && Math.hypot(dx, dy) < (b.r + 18);
         if (hit) {
           score += b.v;
-          // particelle “scintille”
-          for (let i=0;i<16;i++){
-            particles.push({x:b.x, y:b.y, a:0.9});
-          }
-          // popup +50
-          popups.push({text:'+50', x:b.x-16, y:b.y-8, a:1});
-          return false; // rimuovi
+          clickSound(1300, 0.045);
+          for (let i=0;i<12;i++) particles.push({x:b.x, y:b.y, a:0.9});
+          popups.push({text:`+${b.v}`, x:b.x-16, y:b.y-8, a:1});
+          return false;
         }
-        return b.x > -40; // altrimenti resta se in scena
+        return b.x > -40;
       });
+
+      // salvavita si muove con il mondo
+      if (lifesaver) {
+        lifesaver.x -= speed;
+        // raccolta salvavita (anche a terra)
+        const dx = Math.abs(guy.x - lifesaver.x);
+        const dy = Math.abs((guy.y - 70) - lifesaver.y);
+        const take = Math.hypot(dx, dy) < (lifesaver.r + 20);
+        if (take) {
+          shields += 1;
+          clickSound(900, 0.06); // pitch leggermente più basso
+          for (let i=0;i<16;i++) particles.push({x:lifesaver.x, y:lifesaver.y, a:0.95});
+          popups.push({text:'SCUDO +1', x:lifesaver.x-40, y:lifesaver.y-10, a:1});
+          lifesaver = null;
+        } else if (lifesaver.x < -40) {
+          lifesaver = null;
+        }
+      }
 
       // aggiorna popup
       popups.forEach(pp => { pp.y -= 0.6; pp.a -= 0.02; });
@@ -296,11 +386,22 @@
       // personaggio
       guy.update();
 
-      // collisioni con ostacoli
+      // collisioni con ostacoli (usa scudo se presente)
       for (const o of obst) {
         if (collide(o, guy.x)) {
-          running = false; // game over
-          break;
+          if (shields > 0) {
+            shields -= 1; // consuma scudo e salta automaticamente
+            guy.vy = -14;
+            guy.onGround = false;
+            clickSound(700, 0.07);
+            popups.push({text:'SALVATO', x:guy.x-30, y:guy.y-90, a:1});
+            for (let i=0;i<20;i++) particles.push({x:guy.x, y:guy.y-60, a:0.9});
+            // Non fermiamo il gioco
+            break;
+          } else {
+            running = false; // game over
+            break;
+          }
         }
       }
 
@@ -321,6 +422,12 @@
     ctx.fillStyle = FG;
     ctx.font = '20px ui-monospace, Menlo, Consolas, monospace';
     ctx.fillText(`PUNTI ${score}`, 18, 30);
+    // Indicatore scudi
+    if (shields > 0) {
+      ctx.textAlign = 'right';
+      ctx.fillText(`★ ${shields}`, W - 18, 30);
+      ctx.textAlign = 'start';
+    }
 
     if (!running) {
       ctx.textAlign = 'center';
@@ -346,24 +453,26 @@
     running = true;
     t = 0; score = 0; speed = 4;
     obst.length = 0; particles.length = 0; bonuses.length = 0; popups.length = 0;
+    lifesaver = null; shields = 0;
     guy.y = baseY; guy.vy = 0; guy.onGround = true;
   }
 
   window.addEventListener('keydown', e => {
-    if (e.code === 'Space') { e.preventDefault(); onPress(); }
+    if (e.code === 'Space') { e.preventDefault(); ensureAudio(); onPress(); }
     if (e.code === 'KeyR') restart();
     if (e.code === 'KeyP') togglePause();
   });
 
-  document.getElementById('btnJump')?.addEventListener('click', onPress);
+  document.getElementById('btnJump')?.addEventListener('click', ()=>{ ensureAudio(); onPress(); });
   document.getElementById('btnRestart')?.addEventListener('click', restart);
   document.getElementById('btnPause')?.addEventListener('click', togglePause);
-  document.getElementById('touch')?.addEventListener('pointerdown', onPress);
+  document.getElementById('touch')?.addEventListener('pointerdown', ()=>{ ensureAudio(); onPress(); });
 
   function togglePause(){
     running = !running;
     const b = document.getElementById('btnPause');
     if (b) b.textContent = running ? '⏸︎ Pausa' : '▶︎ Riprendi';
+    if (running && AC && AC.state === 'suspended') AC.resume();
   }
 
   // start
