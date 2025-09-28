@@ -20,7 +20,73 @@
   let particles = [];       // polvere bianca della traccia
   let hand = {x: W+120, y: baseY-160, show: false, timer: 0};
 
-  // Personaggio (stilizzato a “contorno”)
+  // === Personaggio ridisegnato stile "La Linea" ===
+  const STROKE = 8;   // spessore tratto
+  const SCALE  = 1;   // scala del personaggio
+
+  function drawLineaMan(ctx, x, y, time, s = SCALE) {
+    const wobble = Math.sin(time * 0.15) * 6; // micro-gestualità del braccio
+
+    ctx.save();
+    ctx.lineWidth   = STROKE;
+    ctx.lineJoin    = 'round';
+    ctx.lineCap     = 'round';
+    ctx.strokeStyle = FG;
+
+    const h = 120 * s;
+    const w = 56  * s;
+    const arm = 46 * s;
+    const finger = 18 * s;
+
+    ctx.beginPath();
+
+    // Piede a L e gamba sinistra
+    ctx.moveTo(x - 10*s, y);
+    ctx.lineTo(x - 10*s, y - (h * 0.55));
+
+    // Fianco sinistro che sale fino alla testa
+    ctx.quadraticCurveTo(x - 10*s, y - (h*0.80), x + (w*0.05), y - (h*0.90));
+    // Sommità della testa (ovale)
+    ctx.quadraticCurveTo(x + (w*0.45), y - (h*1.05), x + (w*0.35), y - (h*1.00));
+
+    // Fronte → Naso a becco → rientro
+    ctx.quadraticCurveTo(x + (w*0.30), y - (h*0.95), x + (w*0.22), y - (h*0.93));
+    ctx.quadraticCurveTo(x + (w*0.42), y - (h*0.90), x + (w*0.46), y - (h*0.84)); // punta naso
+    ctx.quadraticCurveTo(x + (w*0.28), y - (h*0.86), x + (w*0.18), y - (h*0.88)); // rientro
+
+    // Spalla/braccio destro
+    const armY = y - (h*0.70);
+    ctx.lineTo(x + (w*0.05), armY);
+    ctx.lineTo(x + (w*0.05) + arm, armY - wobble);
+
+    // Mano a tre dita (tre tratti separati dalla giuntura)
+    const hx = x + (w*0.05) + arm;
+    const hy = armY - wobble;
+    ctx.moveTo(hx, hy);
+    ctx.lineTo(hx + finger, hy - finger*0.35); // dito alto
+    ctx.moveTo(hx, hy);
+    ctx.lineTo(hx + finger, hy + finger*0.05); // dito medio
+    ctx.moveTo(hx, hy);
+    ctx.lineTo(hx + finger*0.75, hy + finger*0.45); // dito basso
+
+    // Fianco destro e ritorno alla baseline
+    ctx.moveTo(x + (w*0.02), armY + 6);
+    ctx.lineTo(x + (w*0.02), y - (h*0.20));
+    ctx.quadraticCurveTo(x + (w*0.02), y - (h*0.08), x - 6*s, y - (h*0.06));
+    ctx.lineTo(x - 6*s, y);
+
+    ctx.stroke();
+
+    // Bocca (trattino separato)
+    ctx.beginPath();
+    ctx.moveTo(x + (w*0.10), y - (h*0.86));
+    ctx.lineTo(x + (w*0.26), y - (h*0.84));
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  // Personaggio (fisica)
   const guy = {
     x: Math.round(W*0.28),
     y: baseY,
@@ -43,36 +109,7 @@
       }
     },
     draw() {
-      ctx.lineWidth = 6;
-      ctx.lineJoin = 'round';
-      ctx.lineCap = 'round';
-      ctx.strokeStyle = FG;
-
-      const x = this.x, y = this.y;
-      // corpo (profilo a linea continua)
-      ctx.beginPath();
-      ctx.moveTo(x-12, y);
-      ctx.lineTo(x-12, y-90);   // fianco sx
-      ctx.quadraticCurveTo(x-8, y-120, x+20, y-120); // testa sopra
-      ctx.quadraticCurveTo(x+18, y-100, x+12, y-96); // naso
-      ctx.quadraticCurveTo(x+30, y-94, x+42, y-70);  // spalla dx
-      ctx.lineTo(x+38, y-40);                         // braccio
-      // mano dx (aperta)
-      ctx.moveTo(x+38, y-40);
-      ctx.quadraticCurveTo(x+64, y-46, x+70, y-52);
-      ctx.moveTo(x+38, y-40);
-      ctx.quadraticCurveTo(x+64, y-30, x+70, y-26);
-
-      // ritorno al fianco dx
-      ctx.moveTo(x+22, y-40);
-      ctx.lineTo(x+22, y);      // fianco dx
-      ctx.stroke();
-
-      // piccola bocca
-      ctx.beginPath();
-      ctx.moveTo(x+10, y-98);
-      ctx.lineTo(x+26, y-96);
-      ctx.stroke();
+      drawLineaMan(ctx, this.x, this.y, t);
     }
   };
 
@@ -125,14 +162,12 @@
     ctx.lineCap = 'round';
     ctx.strokeStyle = FG;
 
-    let x = 0;
     ctx.beginPath();
     ctx.moveTo(0, baseY);
 
-    // Segmenti fino a ciascun ostacolo
-    let lastX = 0;
     for (const o of obst) {
       if (o.x > W) continue;
+
       // tratto piatto fino all'inizio
       ctx.lineTo(o.x, baseY);
 
@@ -148,10 +183,9 @@
         for (let i=0;i<=o.w;i+=s){
           const px = o.x + i;
           const py = baseY - o.h*Math.sin((i/o.w)*Math.PI);
-          if (i===0) ctx.lineTo(px, py); else ctx.lineTo(px, py);
+          ctx.lineTo(px, py);
         }
       }
-      lastX = o.x + o.w;
     }
     ctx.lineTo(W, baseY);
     ctx.stroke();
@@ -239,7 +273,9 @@
       ctx.textAlign = 'start';
     }
 
-    document.getElementById('score').textContent = score.toString();
+    const el = document.getElementById('score');
+    if (el) el.textContent = score.toString();
+
     requestAnimationFrame(step);
   }
 
@@ -261,14 +297,15 @@
     if (e.code === 'KeyP') togglePause();
   });
 
-  document.getElementById('btnJump').addEventListener('click', onPress);
-  document.getElementById('btnRestart').addEventListener('click', restart);
-  document.getElementById('btnPause').addEventListener('click', togglePause);
-  document.getElementById('touch').addEventListener('pointerdown', onPress);
+  document.getElementById('btnJump')?.addEventListener('click', onPress);
+  document.getElementById('btnRestart')?.addEventListener('click', restart);
+  document.getElementById('btnPause')?.addEventListener('click', togglePause);
+  document.getElementById('touch')?.addEventListener('pointerdown', onPress);
 
   function togglePause(){
     running = !running;
-    document.getElementById('btnPause').textContent = running ? '⏸︎ Pausa' : '▶︎ Riprendi';
+    const b = document.getElementById('btnPause');
+    if (b) b.textContent = running ? '⏸︎ Pausa' : '▶︎ Riprendi';
   }
 
   // start
